@@ -121,17 +121,19 @@ mod psp22_ext {
     /// A chain extension which implements the PSP-22 fungible token standard.
     /// For more details see <https://github.com/w3f/PSPs/blob/master/PSPs/psp-22.md>
     #[ink(storage)]
-    #[derive(Default)]
     pub struct Psp22Extension {
         asset_pairs: Mapping<AssetId, Erc20Ref>,
-
+        asset_pair: ink::contract_ref!(Erc20Trait),
     }
 
     impl Psp22Extension {
         /// Creates a new instance of this contract.
         #[ink(constructor)]
-        pub fn new() -> Self {
-            Self::default()
+        pub fn new(erc20_address: AccountId) -> Self {
+            Self {
+                asset_pairs: Mapping::new(),
+                asset_pair: erc20_address.into(),
+            }
         }
 
         #[ink(message)]
@@ -143,11 +145,34 @@ mod psp22_ext {
 
         #[ink(message)]
         pub fn swap_for_asset(&mut self, asset_id: u32, amount: Balance) {
-            let mut erc20 = self.asset_pairs.get(asset_id).expect("Asset pair not found!");
+            let mut erc20 = self
+                .asset_pairs
+                .get(asset_id)
+                .expect("Asset pair not found!");
 
             // contract needs to be approved to spend funds
             let erc20_result =
                 erc20.transfer_from(self.env().caller(), self.env().account_id(), amount);
+
+            assert!(erc20_result.is_ok(), "erc20_result {:?}", erc20_result);
+
+            let ext_result = self
+                .env()
+                .extension()
+                .transfer(asset_id, self.env().caller(), amount);
+
+            assert!(ext_result.is_ok(), "ext_result {:?}", ext_result);
+        }
+
+        #[ink(message)]
+        pub fn swap_asset(&mut self, asset_id: u32, amount: Balance) {
+            // contract needs to be approved to spend funds
+            let erc20_result =
+               Erc20Trait::transfer_from(self, self.env().caller(), self.env().account_id(), amount);
+
+            // OR:
+            // let erc20_result =
+            //    self.asset_pair.transfer_from(self.env().caller(), self.env().account_id(), amount);
 
             assert!(erc20_result.is_ok(), "erc20_result {:?}", erc20_result);
 
@@ -271,5 +296,74 @@ mod psp22_ext {
                 .extension()
                 .decrease_allowance(asset_id, spender, value)
         }
+
+    }
+
+    impl Erc20Trait for Psp22Extension {
+        /// Returns the total token supply.
+        #[ink(message)]
+        fn total_supply(&self) -> Balance {
+            self.asset_pair.total_supply()
+        }
+
+        /// Returns the account balance for the specified `owner`.
+        #[ink(message)]
+        fn balance_of(&self, owner: AccountId) -> Balance {
+            self.asset_pair.balance_of(owner)
+        }
+
+        /// Returns the amount which `spender` is still allowed to withdraw from `owner`.
+        #[ink(message)]
+        fn allowance(&self, owner: AccountId, spender: AccountId) -> Balance {
+            self.asset_pair.allowance(owner, spender)
+        }
+
+        /// Transfers `value` amount of tokens from the caller's account to account `to`.
+        #[ink(message)]
+        fn transfer(&mut self, to: AccountId, value: Balance) -> Result<()> {
+            self.asset_pair.transfer(to, value)
+        }
+
+        /// Allows `spender` to withdraw from the caller's account multiple times, up to
+        /// the `value` amount.
+        #[ink(message)]
+        fn approve(&mut self, spender: AccountId, value: Balance) -> Result<()> {
+            self.asset_pair.approve(spender, value)
+        }
+
+        /// Transfers `value` tokens on the behalf of `from` to the account `to`.
+        #[ink(message)]
+        fn transfer_from(&mut self, from: AccountId, to: AccountId, value: Balance) -> Result<()> {
+            self.asset_pair.transfer_from(from, to, value)
+        }
+    }
+
+    /// Trait implemented by all ERC-20 respecting smart contracts.
+    #[ink::trait_definition]
+    pub trait Erc20Trait {
+        /// Returns the total token supply.
+        #[ink(message)]
+        fn total_supply(&self) -> Balance;
+
+        /// Returns the account balance for the specified `owner`.
+        #[ink(message)]
+        fn balance_of(&self, owner: AccountId) -> Balance;
+
+        /// Returns the amount which `spender` is still allowed to withdraw from `owner`.
+        #[ink(message)]
+        fn allowance(&self, owner: AccountId, spender: AccountId) -> Balance;
+
+        /// Transfers `value` amount of tokens from the caller's account to account `to`.
+        #[ink(message)]
+        fn transfer(&mut self, to: AccountId, value: Balance) -> Result<()>;
+
+        /// Allows `spender` to withdraw from the caller's account multiple times, up to
+        /// the `value` amount.
+        #[ink(message)]
+        fn approve(&mut self, spender: AccountId, value: Balance) -> Result<()>;
+
+        /// Transfers `value` tokens on the behalf of `from` to the account `to`.
+        #[ink(message)]
+        fn transfer_from(&mut self, from: AccountId, to: AccountId, value: Balance) -> Result<()>;
     }
 }
